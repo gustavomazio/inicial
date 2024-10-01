@@ -1,0 +1,139 @@
+function mostrarHistoricoDoRemetenteAberto(e) {
+  var messageId = e.gmail.messageId; // Obtém o ID da mensagem aberta
+  var message = GmailApp.getMessageById(messageId); // Obtém a mensagem específica pelo ID
+  var remetente = message.getFrom(); // Obtém o remetente da mensagem
+
+  // Extrair o endereço de e-mail do remetente
+  var emailRemetente = remetente.match(/<(.+)>/);
+  emailRemetente = emailRemetente ? emailRemetente[1] : remetente; // Verifica se a regex capturou um e-mail
+
+  Logger.log('Endereço de e-mail do remetente: ' + emailRemetente);
+
+  var threads = GmailApp.search(`from:${remetente}`);
+  var card = CardService.newCardBuilder();
+
+  // Cabeçalho com título em laranja
+  card.setHeader(
+    CardService.newCardHeader()
+      .setTitle('<font color="#FFA500">CRM ATIVA ' + '</font>')
+  );
+
+  // Adiciona campos para nome, email e telefone do contato
+  var sectionContato = CardService.newCardSection()
+    .addWidget(CardService.newTextInput()
+      .setFieldName('nomeContato')
+      .setTitle('Nome do Contato')
+      .setValue(remetente))
+    .addWidget(CardService.newTextInput()
+      .setFieldName('emailContato')
+      .setTitle('Email do Contato')
+      .setValue(emailRemetente))
+    .addWidget(CardService.newTextInput()
+      .setFieldName('telefoneContato')
+      .setTitle('Telefone do Contato'));
+
+  // Adiciona um botão para salvar o contato
+  sectionContato.addWidget(
+    CardService.newButtonSet()
+      .addButton(
+        CardService.newTextButton()
+          .setText('Salvar Contato')
+          .setOnClickAction(
+            CardService.newAction().setFunctionName('salvarContato')
+          )
+      )
+  );
+
+  // Adiciona o bloco de notas no card
+  var sectionBlocoDeNotas = CardService.newCardSection()
+    .addWidget(CardService.newTextInput()
+      .setFieldName('blocoDeNotas')
+      .setTitle('Bloco de Notas')
+      .setMultiline(true));
+
+  // Adiciona as seções ao card
+  card.addSection(sectionContato);
+  card.addSection(sectionBlocoDeNotas);
+
+  threads.forEach(function(thread) {
+    var labels = thread.getLabels().map(function(label) {
+      return label.getName();
+    }).join(', ');
+
+    var messages = thread.getMessages();
+    messages.forEach(function(msg) {
+      card.addSection(
+        CardService.newCardSection()
+          .addWidget(CardService.newTextParagraph().setText(
+            msg.getDate().toLocaleString() + ': ' + msg.getSubject() + ' (Labels: ' + labels + ')'
+          ))
+      );
+    });
+  });
+
+  return card.build();
+}
+
+// Função para salvar o contato no Google Contacts, incluindo observações
+function salvarContato(e) {
+  try {
+    var nomeContato = e.commonEventObject.formInputs.nomeContato.stringInputs.value[0];
+    var emailContato = e.commonEventObject.formInputs.emailContato.stringInputs.value[0];
+    var telefoneContato = e.commonEventObject.formInputs.telefoneContato.stringInputs.value[0];
+    var blocoDeNotas = e.commonEventObject.formInputs.blocoDeNotas.stringInputs.value[0]; // Captura o valor do campo de notas
+
+    Logger.log('Nome: ' + nomeContato + ', Email: ' + emailContato + ', Telefone: ' + telefoneContato);
+    Logger.log('Observações: ' + blocoDeNotas);
+
+    // Verifica se o contato já existe com base no email
+    var contatosExistentes = ContactsApp.getContactsByEmailAddress(emailContato);
+    var contato;
+
+    if (contatosExistentes.length > 0) {
+      // Se o contato já existe, atualizar as informações
+      contato = contatosExistentes[0];
+      contato.setFullName(nomeContato);
+
+      // Atualizar telefone existente ou adicionar se não houver
+      var telefones = contato.getPhones();
+      if (telefones.length > 0) {
+        var workPhone = telefones.find(function(phone) {
+          return phone.getLabel() === ContactsApp.Field.WORK_PHONE;
+        });
+        if (workPhone) {
+          workPhone.setPhoneNumber(telefoneContato); // Atualiza telefone do trabalho
+        } else {
+          contato.addPhone(ContactsApp.Field.WORK_PHONE, telefoneContato); // Adiciona telefone
+        }
+      } else {
+        contato.addPhone(ContactsApp.Field.WORK_PHONE, telefoneContato); // Adiciona telefone se não houver
+      }
+      
+      // Adiciona ou atualiza as notas/observações do contato
+      contato.setNotes(blocoDeNotas);
+
+    } else {
+      // Se o contato não existe, criar um novo
+      contato = ContactsApp.createContact(nomeContato, '', emailContato);
+      contato.addPhone(ContactsApp.Field.WORK_PHONE, telefoneContato);
+      contato.setNotes(blocoDeNotas); // Adiciona as notas/observações ao novo contato
+    }
+
+    // Retorna uma resposta indicando que o contato foi salvo
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification()
+        .setText('Contato salvo: ' + nomeContato + ', Email: ' + emailContato + ', Telefone: ' + telefoneContato + ', Observações: ' + blocoDeNotas))
+      .build();
+
+  } catch (error) {
+    Logger.log('Erro ao salvar contato: ' + error.toString());
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification()
+        .setText('Erro ao salvar o contato. Verifique as permissões e tente novamente.'))
+      .build();
+  }
+}
+
+function buildAddOn(e) {
+  return mostrarHistoricoDoRemetenteAberto(e);
+}
